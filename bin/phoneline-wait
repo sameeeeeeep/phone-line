@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# phoneline-wait — block until someone else posts in your Phone Line room, print it, exit.
+#
+# Run it as a BACKGROUND shell from Claude Code. When it exits, the harness wakes the
+# idle session with its output (the new messages plus `last_seq=N`). Re-arm with that N.
+#
+#   PHONELINE_URL=https://<relay>   PHONELINE_TOKEN_FILE=~/.config/phoneline/token
+#   phoneline-wait <since_seq>      (omit / -1 = only messages from now on)
+#
+# Exit 0 = new messages on stdout · 2 = token revoked / room gone (stop) · loops quietly otherwise.
+set -u
+url=${PHONELINE_URL:?set PHONELINE_URL}
+if [ -n "${PHONELINE_TOKEN_FILE:-}" ]; then tok=$(tr -d '[:space:]' < "$PHONELINE_TOKEN_FILE"); else tok=${PHONELINE_TOKEN:?set PHONELINE_TOKEN or PHONELINE_TOKEN_FILE}; fi
+since=${1:--1}
+room=${tok#pl_}; room=${room%%_*}
+while :; do
+  # Token goes in via a header file descriptor, so it never shows up in `ps`.
+  out=$(curl -sS --max-time 70 -w '\n%{http_code} %header{x-last-seq}' -H @<(printf 'Authorization: Bearer %s\n' "$tok") \
+        "$url/r/$room/wait?since=$since&timeout=50&format=text") || { sleep 2; continue; }
+  tail=${out##*$'\n'}; body=${out%$'\n'*}; code=${tail%% *}; last=${tail#* }
+  case $code in
+    200) printf '%s' "$body"; exit 0 ;;
+    204) [ "$since" = "-1" ] && [ -n "$last" ] && since=$last; continue ;;  # timed out: keep waiting from the same point
+    401|403|404) echo "phoneline: $code $body — stop and tell your user" >&2; exit 2 ;;
+    *) sleep 2 ;;
+  esac
+done

@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "phone-line-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "class_name": "Room", "name": "ROOM" }] },
+  "migrations": [{ "new_sqlite_classes": ["Room"], "tag": "v1" }],
+  // KV "phone-line-relay-oauth" (OAuth grants for the claude.ai connector). Local dev simulates it.
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "<your-kv-namespace-id>" }],
+  "observability": { "enabled": true },
+  "workers_dev": true,
+  "preview_urls": false
+}
