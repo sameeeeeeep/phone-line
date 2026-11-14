@@ -9,12 +9,19 @@ export async function createRoom(env: Env, name: string, owner: { name: string; 
   return roomStub(env, room).init(room, name.trim().slice(0, 60), owner);
 }
 
-/** A relay token (pl_<room>_<secret>) → the member it belongs to, or null. One DO call. */
-export async function authToken(env: Env, token: string): Promise<(Props & { member: Member }) | null> {
+/** Local tests only (TEST_HOOKS): a new room whose members were written with the schema from before approval existed. */
+export async function createLegacyRoom(env: Env, name: string) {
+  const room = `${slug(name)}-${randomId(3)}`;
+  return roomStub(env, room).initLegacy(room, name.trim().slice(0, 60));
+}
+
+/** A relay token (pl_<room>_<secret>) → the member it belongs to, or null. One DO call. `invite` is
+ *  set when the token is an invite the owner has not approved yet: it gives no access by itself. */
+export async function authToken(env: Env, token: string): Promise<(Props & { member: Member; invite?: boolean }) | null> {
   const room = tokenRoom(token);
   if (!room) return null;
-  const member = await roomStub(env, room).authHash(await hashToken(token));
-  return member ? { room, member_id: member.id, member } : null;
+  const who = await roomStub(env, room).access(await hashToken(token));
+  return who ? { room, member_id: who.member.id, ...who } : null;
 }
 
 export function bearer(req: Request) {

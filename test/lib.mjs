@@ -32,33 +32,46 @@ export async function mcp(base, token, name = "test") {
   return { client, call, close: () => client.close() };
 }
 
-/** A WebSocket member (the phone / web view protocol). onMsg gets every pushed message. */
+/** A WebSocket member (the phone / web view protocol). onMsg gets every pushed message.
+ *  Resolves on "hello", or on "pending" for an invite the owner has not approved yet (then api.pending is set:
+ *  this socket's pairing code and client secret). */
 export function ws(base, token, onMsg = () => {}) {
   return new Promise((resolve, reject) => {
     const s = new WebSocket(`${base.replace(/^http/, "ws")}/r/${roomOf(token)}/ws`);
     const pending = new Map();
-    let hello;
+    let hello, pend;
+    const frames = [], wanted = [];
     s.onopen = () => s.send(JSON.stringify({ t: "auth", token }));
     s.onerror = (e) => reject(e);
     s.onmessage = (e) => {
       const at = now();
       const f = JSON.parse(e.data);
+      frames.push(f);
+      for (const w of [...wanted]) if (w.t === f.t) { wanted.splice(wanted.indexOf(w), 1); w.res(f); }
       if (f.t === "hello") { hello = f; resolve(api); }
+      else if (f.t === "pending") { pend = f; resolve(api); }
       else if (f.t === "msg") onMsg(f.m, at);
-      else if ((f.t === "sent" || f.t === "error" || f.t === "pong") && f.ref && pending.has(f.ref)) { pending.get(f.ref)(f); pending.delete(f.ref); }
-      else if (f.t === "error" && !hello) reject(new Error(f.message));
+      else if ((f.t === "sent" || f.t === "done" || f.t === "error" || f.t === "pong") && f.ref && pending.has(f.ref)) { pending.get(f.ref)(f); pending.delete(f.ref); }
+      else if (f.t === "error" && !hello && !pend) reject(new Error(f.message));
     };
     let n = 0;
     const api = {
       socket: s,
       get hello() { return hello; },
+      get pending() { return pend; },
+      frames,
+      /** The next frame of type t from now on, or null after ms. */
+      next: (t, ms = 5000) => new Promise((res) => { const w = { t, res }; wanted.push(w); setTimeout(() => { if (wanted.includes(w)) { wanted.splice(wanted.indexOf(w), 1); res(null); } }, ms); }),
+      /** Any frame with a ref ({t:"approve",code}, {t:"deny",code}); resolves with the reply that carries the ref. */
+      ask: (frame) => new Promise((res) => { const ref = `r${++n}`; pending.set(ref, res); s.send(JSON.stringify({ ...frame, ref })); }),
+      raw: (frame) => s.send(JSON.stringify(frame)),
       send: (text, extra = {}) => new Promise((res) => { const ref = `r${++n}`; pending.set(ref, res); s.send(JSON.stringify({ t: "send", ref, text, ...extra })); }),
       close: () => s.close()
     };
   });
 }
 
-export const roomOf = (token) => token.slice(3).split("_")[0];
+export const roomOf = (token) => token.replace(/^plk?_/, "").split("_")[0]; // works for tokens (pl_) and knock secrets (plk_)
 
 export async function http(base, token, path, init = {}) {
   const r = await fetch(`${base}/r/${roomOf(token)}${path}`, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) } });
@@ -67,7 +80,7 @@ export async function http(base, token, path, init = {}) {
 }
 
 /** Run bin/phoneline-wait the way a Claude Code background shell would. Resolves when the process exits. */
-export function curlWait(base, token, since) {
+export function curlWait(base, token, since = -1) {
   const started = now();
   const p = spawn(join(ROOT, "bin/phoneline-wait"), [String(since)], { env: { ...process.env, PHONELINE_URL: base, PHONELINE_TOKEN: token } });
   let out = "", err = "";
@@ -75,6 +88,18 @@ export function curlWait(base, token, since) {
   p.stderr.on("data", (d) => (err += d));
   const done = new Promise((res) => p.on("exit", (code) => res({ code, out, err, at: now(), started })));
   return { proc: p, done };
+}
+
+/** Run bin/phoneline-join with an invite and a token file (always a temp path in tests). `code` resolves
+ *  with the pairing code it prints (null if it exits first); `done` when the process exits. */
+export function joinScript(base, invite, tokenFile, args = []) {
+  const p = spawn(join(ROOT, "bin/phoneline-join"), args, { env: { ...process.env, PHONELINE_URL: base, PHONELINE_INVITE: invite, PHONELINE_INVITE_FILE: "", PHONELINE_TOKEN_FILE: tokenFile } });
+  let out = "", err = "", gotCode;
+  const code = new Promise((res) => (gotCode = res));
+  p.stdout.on("data", (d) => { out += d; const m = /pairing code (\d{3} \d{3})/.exec(out); if (m) gotCode(m[1]); });
+  p.stderr.on("data", (d) => (err += d));
+  const done = new Promise((res) => p.on("exit", (c) => { gotCode(null); res({ code: c, out, err }); }));
+  return { code, done };
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# phoneline-join — exchange a Phone Line invite for your own member token.
+#
+# An invite is a one-time ticket, not a connection token. This knocks with it, prints a pairing
+# code, waits for the room owner to approve that code, and saves the member token the relay then
+# hands to this run only. Connect with the saved token (MCP bearer, phoneline-wait); the invite
+# stops working once it is used.
+#
+#   PHONELINE_URL=https://<relay>
+#   PHONELINE_INVITE_FILE=<file holding the invite>   (or PHONELINE_INVITE, or the invite on stdin)
+#   PHONELINE_TOKEN_FILE=~/.config/phoneline/token    (where the member token is written, mode 600)
+#   phoneline-join [--force]      --force replaces an existing token file; without it the file is never touched
+#
+# It can wait up to 10 minutes: from Claude Code run it as a BACKGROUND shell and read its output
+# for the pairing code. Tell your user the code; the owner approves only if it matches.
+# Exit 0 = approved, token saved · 2 = denied, or the invite is bad or already used (stop) ·
+# 3 = the code expired or the room has too many requests waiting (ask your user before trying again) ·
+# 4 = the token file already exists.
+set -u
+url=${PHONELINE_URL:?set PHONELINE_URL}
+out_file=${PHONELINE_TOKEN_FILE:-$HOME/.config/phoneline/token}
+[ "${1:-}" = "--force" ] || [ ! -e "$out_file" ] || { echo "phoneline: $out_file already exists; not overwriting it (pass --force to replace it)" >&2; exit 4; }
+if [ -n "${PHONELINE_INVITE_FILE:-}" ]; then invite=$(tr -d '[:space:]' < "$PHONELINE_INVITE_FILE"); elif [ -n "${PHONELINE_INVITE:-}" ]; then invite=$PHONELINE_INVITE; else read -r invite; fi
+invite=${invite##*#t=}   # a pasted invite link works too
+room=${invite#pl_}; room=${room%%_*}
+# Secrets go in via a header file descriptor, so they never show up in `ps`.
+out=$(curl -sS --max-time 30 -X POST -w '\n%{http_code}' -H @<(printf 'Authorization: Bearer %s\n' "$invite") "$url/r/$room/knock?format=text") || { echo "phoneline: can't reach $url" >&2; exit 1; }
+code=${out##*$'\n'}; body=${out%$'\n'*}
+case $code in
+  201) ;;
+  429) echo "phoneline: $code $body — tell your user" >&2; exit 3 ;;
+  *) echo "phoneline: $code $body — stop and tell your user" >&2; exit 2 ;;
+esac
+{ read -r secret; read -r pairing; read -r ttl; } <<< "$body"
+echo "phoneline: pairing code $pairing (valid for $ttl seconds). Tell the room owner this code; waiting for their approval."
+while :; do
+  out=$(curl -sS --max-time 70 -w '\n%{http_code}' -H @<(printf 'Authorization: Bearer %s\n' "$secret") "$url/r/$room/knock?timeout=50&format=text") || { sleep 2; continue; }
+  code=${out##*$'\n'}; body=${out%$'\n'*}
+  case $code in
+    200) mkdir -p "$(dirname "$out_file")" && (umask 077; printf '%s\n' "$body" > "$out_file") && chmod 600 "$out_file" || { echo "phoneline: approved, but could not write $out_file" >&2; exit 1; }
+         echo "phoneline: approved. Member token saved to $out_file; connect with it (the invite no longer works)."; exit 0 ;;
+    202) continue ;;
+    410) echo "phoneline: the pairing code expired before the owner approved — tell your user" >&2; exit 3 ;;
+    401|403|404) echo "phoneline: $code $body — stop and tell your user" >&2; exit 2 ;;
+    *) sleep 2 ;;
+  esac
+done

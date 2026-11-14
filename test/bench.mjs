@@ -11,7 +11,7 @@ const room = await createRoom(BASE, `bench ${new Date().toISOString().slice(11, 
 const owner = await mcp(BASE, room.owner_token, "bench-owner");
 const t = {};
 for (const [name, kind] of [["SenderAgent", "agent"], ["SenderPhone", "human"], ["AgentB", "agent"], ["Phone", "human"], ["Curl", "agent"], ["HttpPoll", "agent"], ["Voice", "agent"], ["PathForm", "agent"]])
-  t[name] = tok((await owner.call("invite", { display_name: name, role: "member", kind })).text);
+  t[name] = tok((await owner.call("invite", { display_name: name, role: "member", kind, approved: true })).text);
 
 const senderAgent = await mcp(BASE, t.SenderAgent, "sender-agent");
 const senderPhone = await ws(BASE, t.SenderPhone);

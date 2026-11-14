@@ -8,6 +8,10 @@ export interface Env {
   OAUTH_PROVIDER?: unknown;
   /** Override the 30/min per-member send limit (local benchmarks only). */
   RATE_PER_MINUTE?: string;
+  /** Override how long a pairing code lasts, in seconds (local tests only; default 600). */
+  PAIRING_TTL_S?: string;
+  /** Local tests only: lets POST /admin/rooms build a room with the pre-approval schema. Never set on the live Worker. */
+  TEST_HOOKS?: string;
 }
 
 export type Role = "owner" | "member" | "read-only";
@@ -43,10 +47,10 @@ export interface Props {
 }
 
 export const ROOM_RE = /^[a-z0-9][a-z0-9-]{2,39}$/;
-const TOKEN_RE = /^pl_([a-z0-9][a-z0-9-]{2,39})_([A-Za-z0-9_-]{43})$/;
+const TOKEN_RE = /^plk?_([a-z0-9][a-z0-9-]{2,39})_([A-Za-z0-9_-]{43})$/;
 
 /** Room limits from the brief. */
-export const LIMITS = { keep: 5000, maxText: 4000, perMinute: 30, maxWaitS: 50, readMax: 200 } as const;
+export const LIMITS = { keep: 5000, maxText: 4000, perMinute: 30, maxWaitS: 50, readMax: 200, pairingTtlS: 600, maxRequests: 5 } as const;
 
 const b64url = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
@@ -59,7 +63,24 @@ export function newToken(room: string) {
   return `pl_${room}_${b64url(crypto.getRandomValues(new Uint8Array(32)))}`;
 }
 
-/** The room a token belongs to, or null if it is not a relay token. */
+/** A pairing code for the requester and the owner to compare: six random digits, shown as "482 913". */
+export function pairingCode() {
+  const b = new Uint32Array(1);
+  do crypto.getRandomValues(b); while (b[0] >= 4_294_000_000); // drop the uneven tail so every code is equally likely
+  return String(b[0] % 1_000_000).padStart(6, "0").replace(/^(\d{3})/, "$1 ");
+}
+
+/** What a caller is told when it uses an unapproved invite as if it were a connection token. It
+ *  carries no pairing code: a code is only ever shown to the one client that knocked for it. */
+export const INVITE_ONLY = "this invite has not been approved yet, and an invite is not a connection token. Exchange it first: run bin/phoneline-join with it (it shows a pairing code, waits for the room owner to approve, and saves a member token that only you hold), or open the invite link in a browser, or paste the invite on the claude.ai sign-in page. Then connect with that member token, not the invite. Tell your user.";
+export const INVITE_USED = "this invite has already been used and no longer works. Connect with the member token that was issued when the owner approved (phoneline-join saved it to your token file), or ask the room owner for a new invite.";
+
+/** The secret a knocking client gets back once: only its holder can wait on, and collect, that request. */
+export function newSecret(room: string) {
+  return `plk_${room}_${b64url(crypto.getRandomValues(new Uint8Array(32)))}`;
+}
+
+/** The room a token (pl_…) or a knock secret (plk_…) belongs to, or null if it is neither. */
 export function tokenRoom(token: string): string | null {
   const m = TOKEN_RE.exec(token);
   return m ? m[1] : null;
@@ -118,7 +139,7 @@ export function nameKey(name: string): string {
 }
 
 export class RelayError extends Error {
-  constructor(public code: "unauthorized" | "forbidden" | "not_found" | "rate_limited" | "bad_request" | "revoked", msg: string) {
+  constructor(public code: "unauthorized" | "forbidden" | "not_found" | "rate_limited" | "bad_request" | "revoked" | "pending", msg: string) {
     super(`${code}: ${msg}`);
   }
 }
@@ -126,6 +147,6 @@ export class RelayError extends Error {
 export function errorCode(e: unknown): { code: string; message: string; status: number } {
   const message = e instanceof Error ? e.message : String(e);
   const code = /^(\w+):/.exec(message)?.[1] ?? "error";
-  const status = { unauthorized: 401, revoked: 401, forbidden: 403, not_found: 404, rate_limited: 429, bad_request: 400 }[code] ?? 500;
+  const status = { unauthorized: 401, revoked: 401, forbidden: 403, pending: 403, not_found: 404, rate_limited: 429, bad_request: 400 }[code] ?? 500;
   return { code, message, status };
 }

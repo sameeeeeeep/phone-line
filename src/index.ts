@@ -1,8 +1,8 @@
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { mcpApi } from "./mcp";
-import { authToken, bearer, createRoom, roomStub } from "./rooms";
+import { authToken, bearer, createLegacyRoom, createRoom, roomStub } from "./rooms";
 import { type Env, type Props, KINDS, LIMITS, ROOM_RE, errorCode, hashToken, tokenRoom } from "./shared";
-import { authorizePage, roomPage } from "./web";
+import { authorizePage, pairingPage, roomPage } from "./web";
 import type { Msg } from "./shared";
 
 export { Room } from "./room";
@@ -15,6 +15,11 @@ export { Room } from "./room";
 //   GET  /r/<room>/wait        HTTP long-poll for a background `curl` that exits on the next message.
 //   GET  /r/<room>/messages    read since a seq · POST to send. Bearer token.
 //   GET  /r/<room>/members     who's here.
+//   POST /r/<room>/knock       Bearer = an unapproved invite → a join request: pairing code + a client secret (returned once).
+//   GET  /r/<room>/knock       Bearer = that client secret. 200 approved (+ the new member token, once) · 202 still
+//                              waiting · 410 expired · 401 denied. ?peek looks without collecting the token.
+//   GET  /r/<room>/requests    owners: who is waiting for approval, with pairing codes.
+//   POST /r/<room>/requests/approve · /deny   owners: {code} of the request.
 //   POST /admin/rooms          bootstrap a room (ADMIN_TOKEN).
 
 const json = (o: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -50,7 +55,10 @@ const app = {
       const t = bearer(request);
       if (!env.ADMIN_TOKEN || !t || t.length !== env.ADMIN_TOKEN.length || !crypto.subtle.timingSafeEqual(new TextEncoder().encode(t), new TextEncoder().encode(env.ADMIN_TOKEN)))
         return json({ error: "unauthorized" }, 401);
-      const b = (await request.json().catch(() => ({}))) as { name?: string; owner_name?: string; owner_kind?: string };
+      const b = (await request.json().catch(() => ({}))) as { name?: string; owner_name?: string; owner_kind?: string; legacy?: boolean };
+      if (b.legacy) { // local tests only; the room refuses unless TEST_HOOKS is set
+        try { return json(await createLegacyRoom(env, String(b.name || "room"))); } catch (e) { return err(e); }
+      }
       const kind = KINDS.includes(b.owner_kind as never) ? (b.owner_kind as "agent" | "human") : "human";
       try {
         const r = await createRoom(env, String(b.name || "room"), { name: String(b.owner_name || "Owner").slice(0, 60), kind });
@@ -60,7 +68,7 @@ const app = {
 
     if (path === "/authorize") return authorize(request, env);
 
-    const m = /^\/r\/([a-z0-9][a-z0-9-]{2,39})(\/(ws|wait|messages|members))?$/.exec(path);
+    const m = /^\/r\/([a-z0-9][a-z0-9-]{2,39})(\/(ws|wait|messages|members|knock|requests|requests\/approve|requests\/deny))?$/.exec(path);
     if (!m) return json({ error: "not_found" }, 404);
     const [, room, , sub] = m;
     if (!ROOM_RE.test(room)) return json({ error: "not_found" }, 404);
@@ -70,7 +78,7 @@ const app = {
 
     // Bearer endpoints: pass the token's hash straight to the room (one DO hop; the DO checks it).
     const t = bearer(request) ?? "";
-    if (tokenRoom(t) !== room) return json({ error: "unauthorized", message: "Bearer invite token for this room required" }, 401);
+    if (tokenRoom(t) !== room) return json({ error: "unauthorized", message: "Bearer token for this room required" }, 401);
     const who = await hashToken(t);
     const stub = roomStub(env, room);
     try {
@@ -91,6 +99,26 @@ const app = {
         return url.searchParams.get("format") === "text" ? new Response(asText(room, r), { headers: { "content-type": "text/plain; charset=utf-8" } }) : json(r);
       }
       if (sub === "members") return json({ members: await stub.members(who) });
+      const plain = (body: string, status: number) => new Response(body + "\n", { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+      const text = url.searchParams.get("format") === "text"; // for bin/phoneline-join: no JSON to parse in a shell
+      if (sub === "knock" && request.method === "POST") {
+        const k = await stub.knock(who, "script or HTTP");
+        return text ? plain(`${k.client_secret}\n${k.code}\n${k.expires_in_s}`, 201)
+          : json({ request_id: k.request_id, client_secret: k.client_secret, pairing_code: k.code, expires_in_s: k.expires_in_s }, 201);
+      }
+      if (sub === "knock") {
+        // `who` is the hash of the client secret here: only the client that knocked can ask.
+        const c = await stub.claim(who, Math.min(LIMITS.maxWaitS, Number(url.searchParams.get("timeout") ?? LIMITS.maxWaitS)), url.searchParams.has("peek") ? "peek" : "token");
+        if (c.state === "approved") return text ? plain(c.token ?? "approved", 200) : json({ approval: "approved", member: c.member, ...(c.token ? { token: c.token } : {}) });
+        if (c.state === "waiting") return text ? plain("pending: waiting for the room owner's approval", 202) : json({ approval: "pending", pairing_code: c.code, expires_in_s: c.expires_in_s }, 202);
+        return text ? plain("expired: the pairing code ran out before the owner approved; knock again for a new code", 410) : json({ approval: "expired", message: "the pairing code ran out before the owner approved (or this is not a request's client secret); knock again for a new code" }, 410);
+      }
+      if (sub === "requests") return json({ requests: await stub.requests(who) });
+      if ((sub === "requests/approve" || sub === "requests/deny") && request.method === "POST") {
+        const b = (await request.json().catch(() => null)) as { code?: string } | null;
+        if (!b?.code) return json({ error: "bad_request", message: "JSON body with the request's pairing code required: {\"code\":\"482 913\"}" }, 400);
+        return json(sub === "requests/approve" ? await stub.approve(who, String(b.code)) : await stub.deny(who, String(b.code)));
+      }
     } catch (e) { return err(e); }
     return json({ error: "not_found" }, 404);
   }
@@ -114,7 +142,10 @@ function redirectTarget(uri: string): { host: string; known: boolean } | null {
   } catch { return null; }
 }
 
-/** The claude.ai connector's sign-in: paste an invite token → an OAuth grant scoped to that member. */
+/** The claude.ai connector's sign-in: paste a token → an OAuth grant scoped to that member.
+ *  An unapproved invite gets no grant. The sign-in knocks, and the page shows its pairing code and
+ *  keeps the request's client secret; once the owner approves, the page posts that secret back and
+ *  only then is the grant made. Another browser with the same invite has a different request. */
 async function authorize(request: Request, env: Env) {
   const oauth = env.OAUTH_PROVIDER as OAuthHelpers;
   const n = nonce();
@@ -127,10 +158,36 @@ async function authorize(request: Request, env: Env) {
   if (request.method !== "POST") return html(authorizePage(name, null, n), n);
   const form = await request.formData();
   const token = String(form.get("token") ?? "").trim().replace(/^.*#t=/, "");
-  const who = await authToken(env, token);
-  if (!who) return html(authorizePage(name, "That token didn't work. Check it, or ask the room owner for a new invite.", n), n, 401);
+  const secret = String(form.get("secret") ?? "");
+  const fail = (e: unknown) => {
+    const { message, status } = errorCode(e);
+    return html(authorizePage(name, message.replace(/^\w+: /, "").replace(/^./, (c) => c.toUpperCase()) + ".", n), n, status);
+  };
+  let who: (Props & { name: string }) | null = null;
+  const room = tokenRoom(secret);
+  if (room) {
+    // The waiting page coming back with its client secret.
+    try {
+      const c = await roomStub(env, room).claim(await hashToken(secret), 0, "grant");
+      if (c.state === "approved" && c.member) who = { room, member_id: c.member.id, name: c.member.name };
+      else if (c.state === "waiting") return html(pairingPage(name, { token, secret, room, code: c.code ?? "", expires_in_s: c.expires_in_s ?? 0 }, n), n, 202);
+      // expired: fall through and knock again with the invite, for a new code
+    } catch (e) { return fail(e); } // denied
+  }
+  if (!who) {
+    let t;
+    try { t = await authToken(env, token); } catch (e) { return fail(e); }
+    if (!t) return html(authorizePage(name, "That token didn't work. Check it, or ask the room owner for a new invite.", n), n, 401);
+    if (t.invite) {
+      try {
+        const k = await roomStub(env, t.room).knock(await hashToken(token), "connector sign-in");
+        return html(pairingPage(name, { token, secret: k.client_secret, room: t.room, name: k.name, code: k.code, expires_in_s: k.expires_in_s }, n), n, 202);
+      } catch (e) { return fail(e); } // too many requests already waiting in that room
+    }
+    who = { room: t.room, member_id: t.member_id, name: t.member.name };
+  }
   const { redirectTo } = await oauth.completeAuthorization({
-    request: req, userId: `${who.room}.${who.member_id}` /* no ':' — the provider splits tokens on it */, metadata: { room: who.room, name: who.member.name }, scope: req.scope,
+    request: req, userId: `${who.room}.${who.member_id}` /* no ':' — the provider splits tokens on it */, metadata: { room: who.room, name: who.name }, scope: req.scope,
     props: { room: who.room, member_id: who.member_id }
   });
   return Response.redirect(redirectTo, 302);
