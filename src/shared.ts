@@ -71,19 +71,30 @@ export async function hashToken(token: string) {
 }
 
 /** Errors thrown across RPC keep their message, so codes ride in a prefix: "forbidden: …". */
-/** A display name or addressee as it may be stored and rendered: no control, line-break or
- *  direction-override characters (they let a name fake a new line or another sender), single spaces, 60 chars. */
+/** A display name or addressee as it may be stored and rendered: no control, format, invisible or
+ *  line-break characters (they let a name fake a new line or hide a difference), single spaces, 60 chars. */
 export function cleanName(v: unknown): string {
   return String(v ?? "")
-    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ")
-    .replace(/\s+/g, " ")
+    .normalize("NFKC")
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0\u180e\u061c]/gu, " ")
+    .replace(/\s+/gu, " ")
     .trim()
     .slice(0, 60);
 }
 
-/** Two names that read the same count as the same name. */
+// Letters from other alphabets that are drawn like Latin ones. Not the full Unicode confusables
+// list, but it covers the Cyrillic and Greek lookalikes that make one name pass for another.
+const LOOKALIKE: Record<string, string> = {
+  "а": "a", "в": "b", "с": "c", "ԁ": "d", "е": "e", "һ": "h", "н": "h", "і": "i", "ј": "j", "к": "k", "м": "m",
+  "о": "o", "р": "p", "ѕ": "s", "т": "t", "у": "y", "х": "x", "ё": "e",
+  "α": "a", "β": "b", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "υ": "u", "χ": "x",
+  "ı": "i", "ǀ": "l", "0": "o", "1": "l"
+};
+
+/** Two names that read the same count as the same name: case, accents, spacing and lookalike letters are ignored. */
 export function nameKey(name: string): string {
-  return name.normalize("NFKC").toLowerCase();
+  const base = name.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[\s\p{P}\p{S}]/gu, "");
+  return Array.from(base, (ch) => LOOKALIKE[ch] ?? ch).join("");
 }
 
 export class RelayError extends Error {

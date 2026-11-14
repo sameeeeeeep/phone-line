@@ -110,10 +110,11 @@ export class Room extends DurableObject<Env> {
     return !r ? null : r.revoked ? "revoked" : "ok";
   }
 
-  /** A member cannot take a name another active member already has, so nobody can pose as someone else. */
+  /** A member cannot take a name any other member has or had (revoked ones too: their old messages
+   *  stay in the room under that name), so nobody can pose as someone else. */
   private assertNameFree(name: string, exceptId: string | null) {
     const key = nameKey(name);
-    const rows = this.sql.exec("SELECT id, name FROM members WHERE revoked = 0").toArray() as { id: string; name: string }[];
+    const rows = this.sql.exec("SELECT id, name FROM members").toArray() as { id: string; name: string }[];
     if (rows.some((r) => r.id !== exceptId && nameKey(String(r.name)) === key)) {
       throw new RelayError("bad_request", `the name "${name}" is already used in this room; pick another`);
     }
