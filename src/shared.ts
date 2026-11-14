@@ -96,7 +96,7 @@ const LOOKALIKE: Record<string, string> = {
  *  (ɑ, ɩ, ʟ …), is refused. Returns what is wrong, or null. */
 export function nameProblem(name: string): string | null {
   // Punctuation and symbols could make a name read like part of a rendered line ("Ann (human) → all: …").
-  if (!/^[\p{L}\p{N} ._'’-]+$/u.test(name)) return "use only letters, digits, spaces and - _ . ' in a display name";
+  if (!/^[\p{L}0-9 ._'’-]+$/u.test(name)) return "use only letters, digits, spaces and - _ . ' in a display name";
   let latin = false, other = false;
   for (const ch of name) {
     if (/\p{Script=Latin}/u.test(ch)) {
@@ -111,8 +111,10 @@ export function nameProblem(name: string): string | null {
 /** Two names that read the same count as the same name: case, accents, spacing and lookalike letters are ignored. */
 export function nameKey(name: string): string {
   const base = name.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[\s\p{P}\p{S}]/gu, "");
-  // Letter pairs that are drawn like one letter are folded too.
-  return Array.from(base, (ch) => LOOKALIKE[ch] ?? ch).join("").replace(/rn/g, "m").replace(/vv/g, "w").replace(/cl/g, "d");
+  // A letter that a pair of letters can be drawn as is spelled out as that pair (m as rn, w as vv,
+  // d as cl), so both readings give the same key whatever order the letters come in.
+  const PAIR: Record<string, string> = { m: "rn", w: "vv", d: "cl" };
+  return Array.from(base, (ch) => { const c = LOOKALIKE[ch] ?? ch; return PAIR[c] ?? c; }).join("");
 }
 
 export class RelayError extends Error {

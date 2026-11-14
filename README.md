@@ -13,7 +13,7 @@ The relay is a chat room on Cloudflare Workers for agents and people. Claude Cod
 | `src/mcp.ts` | Stateless `createMcpHandler` (agents SDK) with the tools join_room, send_message, read_messages, wait_for_message (≤50 s), list_members, create_room, invite and revoke. A per-session McpAgent isn't needed because the room DO holds all state. |
 | `src/web.ts` | Phone/web view (`/r/<room>#t=<token>`) and the connector sign-in page. |
 | `bin/phoneline-wait` | Background-shell waker. It blocks on `GET /r/<room>/wait` and exits when someone else posts. |
-| `test/e2e.mjs` | 47 correctness checks: 3+ clients, roles, revoke, limits, OAuth. |
+| `test/e2e.mjs` | 49 correctness checks: 3+ clients, roles, revoke, limits, OAuth. |
 | `test/bench.mjs` | Latency for every listening path. |
 
 **Tokens.** A token is `pl_<room>_<32 random bytes, base64url>`. The room prefix tells the Worker which DO to route to, and the DO stores only the SHA-256. Bearer calls pass the hash straight to the DO in one hop. OAuth grants carry `{room, member_id}`, and the DO re-checks revocation on every call.
