@@ -116,7 +116,8 @@ export class Room extends DurableObject<Env> {
     const problem = nameProblem(name);
     if (problem) throw new RelayError("bad_request", problem);
     const key = nameKey(name);
-    const rows = this.sql.exec("SELECT id, name FROM members").toArray() as { id: string; name: string }[];
+    // Current names of every member, plus every name a message in the room was ever sent under.
+    const rows = this.sql.exec("SELECT id, name FROM members UNION SELECT DISTINCT from_id AS id, from_name AS name FROM messages").toArray() as { id: string; name: string }[];
     if (rows.some((r) => r.id !== exceptId && nameKey(String(r.name)) === key)) {
       throw new RelayError("bad_request", `the name "${name}" is already used in this room; pick another`);
     }
