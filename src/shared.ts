@@ -85,11 +85,16 @@ export function cleanName(v: unknown): string {
 // Letters from other alphabets that are drawn like Latin ones. Not the full Unicode confusables
 // list, but it covers the Cyrillic and Greek lookalikes that make one name pass for another.
 const LOOKALIKE: Record<string, string> = {
-  "а": "a", "в": "b", "с": "c", "ԁ": "d", "е": "e", "һ": "h", "н": "h", "і": "i", "ј": "j", "к": "k", "м": "m",
+  "а": "a", "в": "b", "с": "c", "ԁ": "d", "е": "e", "һ": "h", "н": "h", "і": "l", "ј": "j", "к": "k", "м": "m",
   "о": "o", "р": "p", "ѕ": "s", "т": "t", "у": "y", "х": "x", "ё": "e",
-  "α": "a", "β": "b", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "υ": "u", "χ": "x",
-  "ı": "i", "ǀ": "l", "0": "o", "1": "l"
+  "α": "a", "β": "b", "ε": "e", "ι": "l", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "υ": "u", "χ": "x",
+  "ı": "l", "i": "l", "ǀ": "l", "ӏ": "l", "1": "l", "0": "o"
 };
+
+/** A name that mixes Latin letters with Cyrillic or Greek ones is almost always a disguise. */
+export function mixesAlphabets(name: string): boolean {
+  return /\p{Script=Latin}/u.test(name) && /[\p{Script=Cyrillic}\p{Script=Greek}]/u.test(name);
+}
 
 /** Two names that read the same count as the same name: case, accents, spacing and lookalike letters are ignored. */
 export function nameKey(name: string): string {
