@@ -50,7 +50,7 @@ export const ROOM_RE = /^[a-z0-9][a-z0-9-]{2,39}$/;
 const TOKEN_RE = /^plk?_([a-z0-9][a-z0-9-]{2,39})_([A-Za-z0-9_-]{43})$/;
 
 /** Room limits from the brief. */
-export const LIMITS = { keep: 5000, maxText: 4000, perMinute: 30, maxWaitS: 50, readMax: 200, pairingTtlS: 600, maxRequests: 5 } as const;
+export const LIMITS = { keep: 5000, maxText: 4000, perMinute: 30, maxWaitS: 50, readMax: 200, pairingTtlS: 600, maxPerInvite: 3, maxRequests: 5 } as const;
 
 const b64url = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 

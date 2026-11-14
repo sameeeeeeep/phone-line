@@ -161,6 +161,12 @@ export class Room extends DurableObject<Env> {
     const secretHash = await hashToken(secret);
     const now = Date.now();
     this.sql.exec("DELETE FROM knocks WHERE expires <= ?", now);
+    // One invite holds at most LIMITS.maxPerInvite waiting requests; a further knock is refused until one
+    // is answered or expires. Without this, whoever holds a single invite could fill the room's whole
+    // list and lock every other invitee out. (Refused rather than replacing the oldest, so a second
+    // holder of a leaked invite cannot push the real invitee's waiting request out.)
+    const own = Number(this.sql.exec("SELECT COUNT(*) AS n FROM knocks WHERE member_id = ? AND state = 'waiting'", r.id).one().n);
+    if (own >= LIMITS.maxPerInvite) throw new RelayError("rate_limited", `this invite already has ${LIMITS.maxPerInvite} join requests waiting; ask the room owner to answer them, or wait for them to expire`);
     const live = this.sql.exec("SELECT code, state FROM knocks").toArray();
     if (live.filter((k) => k.state === "waiting").length >= LIMITS.maxRequests) throw new RelayError("rate_limited", `this room already has ${LIMITS.maxRequests} join requests waiting for its owner; try again in a few minutes`);
     let code = pairingCode();

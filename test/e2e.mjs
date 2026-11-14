@@ -399,6 +399,18 @@ await http(BASE, cap.owner_token, "/requests/approve", { method: "POST", body: J
 h = await knock(guests[3].token);
 ok(h.status === 201 && !!h.body.pairing_code, "once a request is settled the next knock gets a code", JSON.stringify(h.status));
 
+// One invite can't crowd out the others: it holds three waiting requests at most
+const crowd = await createRoom(BASE, "crowd", "Dana");
+const dana = await mcp(BASE, crowd.owner_token, "dana");
+const [eve, fay] = [await invite(dana, "Eve"), await invite(dana, "Fay")];
+const eveKnocks = [];
+for (let i = 0; i < 6; i++) eveKnocks.push(await knock(eve.token));
+const fayKnock = await knock(fay.token);
+h = await http(BASE, crowd.owner_token, "/requests");
+all = [await poll(eveKnocks[0].body.client_secret, "peek&timeout=0")];
+ok(eveKnocks.slice(0, 3).every((x) => x.status === 201) && eveKnocks.slice(3).every((x) => x.status === 429 && !x.body.pairing_code && !x.body.client_secret) && fayKnock.status === 201 && !!fayKnock.body.pairing_code && h.body.requests.length === 4 && all[0].status === 202,
+  "one invite holds at most 3 waiting requests, its first stays alive, and another invitee can still knock", JSON.stringify([h.body.requests.length, all.map((x) => x.status), fayKnock.status]));
+
 // A room from before approval existed: members written without the new columns, then migrated
 const old = await (await fetch(`${BASE}/admin/rooms`, { method: "POST", headers: { authorization: `Bearer ${adminToken()}` }, body: JSON.stringify({ name: "old", legacy: true }) })).json();
 if (old.error) skip("members of a room made before approval stay active after the migration", `${old.message}; set TEST_HOOKS=1 in .dev.vars`);

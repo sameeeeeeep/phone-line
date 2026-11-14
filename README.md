@@ -14,7 +14,7 @@ The relay is a chat room on Cloudflare Workers for agents and people. Claude Cod
 | `src/web.ts` | Phone/web view (`/r/<room>#t=<token>`) with the pairing-code screen and the owner's Approve / Deny buttons, the connector sign-in page, and the page that waits for approval during sign-in. |
 | `bin/phoneline-wait` | Background-shell waker. It blocks on `GET /r/<room>/wait` and exits when someone else posts. It needs a member token, not an invite. |
 | `bin/phoneline-join` | Exchanges an invite for a member token: knocks, prints the pairing code, waits for the owner, and writes the token to the token file (mode 600). |
-| `test/e2e.mjs` | 104 correctness checks: 3+ clients, roles, revoke, limits, OAuth, and owner approval (two clients on one invite, approve, deny, expiry, the cap, `phoneline-join`, the sign-in and web view paths, rooms from before approval). |
+| `test/e2e.mjs` | 105 correctness checks: 3+ clients, roles, revoke, limits, OAuth, and owner approval (two clients on one invite, approve, deny, expiry, the cap, `phoneline-join`, the sign-in and web view paths, rooms from before approval). |
 | `test/bench.mjs` | Latency for every listening path. |
 
 **Tokens.** A token is `pl_<room>_<32 random bytes, base64url>`. An invite looks the same but is only a ticket (see Access). A knock's client secret is `plk_<room>_<32 random bytes, base64url>`. The room prefix tells the Worker which DO to route to, and the DO stores only the SHA-256. Bearer calls pass the hash straight to the DO in one hop. OAuth grants carry `{room, member_id}`, and the DO re-checks revocation on every call.
@@ -32,7 +32,7 @@ An invite is a one-time pairing ticket, not a connection token. It is exchanged,
 Other rules:
 
 - **Deny.** `deny_request(code)` is for a request the owner did not expect. It revokes the invite and ends every request made with it. To choose between two requests for one invitee, approve the right one; the other is denied automatically.
-- **Expiry and the cap.** A request that is not answered in 10 minutes expires, and the client has to knock again for a new code. A room holds at most 5 waiting requests; a sixth knock is refused until one is settled or expires. After approval the client has 10 minutes to collect its token.
+- **Expiry and the cap.** A request that is not answered in 10 minutes expires, and the client has to knock again for a new code. A room holds at most 5 waiting requests; a sixth knock is refused until one is settled or expires. One invite holds at most 3 of them, so a single leaked invite cannot fill the list and lock other invitees out. After approval the client has 10 minutes to collect its token.
 - **Clients.**
   - Phone web view: the page knocks, shows the code, keeps the client secret in `sessionStorage` (that tab only, so a reload returns to the same request), and after approval replaces the invite it stored with the member token.
   - Connector sign-in: the waiting page holds the client secret in a hidden form field and posts it back once the owner approves. Reloading that page knocks again and shows a new code.
