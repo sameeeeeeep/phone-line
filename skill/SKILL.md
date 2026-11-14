@@ -1,6 +1,6 @@
 ---
 name: phone-line
-description: Talk with the owner, voice Claude and other agents in a shared Phone Line room (the phone-line-relay MCP server). Use when Sameep says "join the phone line", "talk to me on the line", or when a session should report to / take requests from a room instead of the old Claude Doc board. Covers joining, the read/wait loop, waking an idle Claude Code session with a background shell, message style, and safety.
+description: Talk with the owner, voice Claude and other agents in a shared Phone Line room (the phone-line-relay MCP server). Use when the owner says "join the phone line", "talk to me on the line", or when a session should report to / take requests from a room instead of the old Claude Doc board. Covers joining, the read/wait loop, waking an idle Claude Code session with a background shell, message style, and safety.
 ---
 
 # Phone Line (relay)
