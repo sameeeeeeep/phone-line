@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { type Env, type Kind, type Member, type Msg, type MsgType, type Role, LIMITS, RelayError, ROLES, KINDS, TYPES, hashToken, newToken, randomId } from "./shared";
+import { type Env, type Kind, type Member, type Msg, type MsgType, type Role, LIMITS, RelayError, ROLES, KINDS, TYPES, cleanName, hashToken, nameKey, newToken, randomId } from "./shared";
 
 // One Durable Object per room. It owns the room's SQLite (members + messages), hands out
 // seq numbers (the DO runs one request at a time, so seq never collides), and holds the
@@ -89,6 +89,7 @@ export class Room extends DurableObject<Env> {
     this.sql.exec("INSERT INTO meta (k, v) VALUES ('room', ?), ('name', ?), ('created', ?)", room, name, String(Date.now()));
     const token = newToken(room);
     const id = randomId();
+    owner = { ...owner, name: cleanName(owner.name) || "Owner" };
     this.sql.exec("INSERT INTO members (id, name, kind, role, token_hash, created) VALUES (?, ?, ?, 'owner', ?, ?)", id, owner.name, owner.kind, await hashToken(token), Date.now());
     return { room, name, owner_token: token, member: { id, name: owner.name, kind: owner.kind, role: "owner" as Role } };
   }
@@ -109,11 +110,21 @@ export class Room extends DurableObject<Env> {
     return !r ? null : r.revoked ? "revoked" : "ok";
   }
 
+  /** A member cannot take a name another active member already has, so nobody can pose as someone else. */
+  private assertNameFree(name: string, exceptId: string | null) {
+    const key = nameKey(name);
+    const rows = this.sql.exec("SELECT id, name FROM members WHERE revoked = 0").toArray() as { id: string; name: string }[];
+    if (rows.some((r) => r.id !== exceptId && nameKey(String(r.name)) === key)) {
+      throw new RelayError("bad_request", `the name "${name}" is already used in this room; pick another`);
+    }
+  }
+
   async join(who: string, displayName?: string) {
     let m = this.me(who);
     const memberId = m.id;
-    if (displayName && displayName.trim() && displayName.trim() !== m.name) {
-      const name = displayName.trim().slice(0, 60);
+    const name = cleanName(displayName);
+    if (name && name !== m.name) {
+      this.assertNameFree(name, memberId);
       this.sql.exec("UPDATE members SET name = ? WHERE id = ?", name, memberId);
       m = { ...m, name };
     }
@@ -145,7 +156,7 @@ export class Room extends DurableObject<Env> {
     this.sent.set(memberId, recent);
 
     const id = randomId();
-    const to = input.to ? String(input.to).slice(0, 60) : null;
+    const to = cleanName(input.to) || null;
     const replyTo = input.reply_to == null ? null : Number(input.reply_to);
     const seq = Number(
       this.sql.exec(
@@ -226,8 +237,9 @@ export class Room extends DurableObject<Env> {
     if (m.role !== "owner") throw new RelayError("forbidden", "only owners can invite");
     if (!ROLES.includes(role as Role)) throw new RelayError("bad_request", `role must be one of ${ROLES.join(", ")}`);
     if (!KINDS.includes(kind as Kind)) throw new RelayError("bad_request", `kind must be agent or human`);
-    const clean = String(name ?? "").trim().slice(0, 60);
+    const clean = cleanName(name);
     if (!clean) throw new RelayError("bad_request", "display_name is empty");
+    this.assertNameFree(clean, null);
     const room = this.roomId();
     const token = newToken(room);
     const id = randomId();

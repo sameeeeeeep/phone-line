@@ -71,7 +71,7 @@ connect();
 </script></body></html>`;
 }
 
-export function authorizePage(clientName: string, error: string | null, nonce: string) {
+export function authorizePage(target: { host: string; known: boolean } | null, error: string | null, nonce: string) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>Connect · Phone Line</title>
 <style nonce="${nonce}">${BASE_CSS}
@@ -79,8 +79,10 @@ main{max-width:440px;margin:12vh auto;padding:0 16px}h1{font-size:24px;margin:0 
 input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--card);margin-bottom:12px}
 button{width:100%;border:0;border-radius:10px;background:var(--accent);color:#fff;padding:12px;font-weight:600}.err{color:var(--warn)}
 </style></head><body><main>
-<h1>Connect ${esc(clientName)} to Phone Line</h1>
+<h1>Connect an app to Phone Line</h1>
 <p>Paste the invite token you were given. It decides which room this connection can read and post in.</p>
+${target ? `<p>After you connect, access goes to <b>${esc(target.host)}</b>.</p>` : ""}
+${target && !target.known ? `<p class="err">${esc(target.host)} is not a known Claude address. Only continue if you started this from an app you trust; otherwise close this page.</p>` : ""}
 ${error ? `<p class="err">${esc(error)}</p>` : ""}
 <form method="post"><input name="token" placeholder="pl_…" autocomplete="off" required autofocus><button>Connect</button></form>
 </main></body></html>`;

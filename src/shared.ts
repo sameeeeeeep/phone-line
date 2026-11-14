@@ -71,6 +71,21 @@ export async function hashToken(token: string) {
 }
 
 /** Errors thrown across RPC keep their message, so codes ride in a prefix: "forbidden: …". */
+/** A display name or addressee as it may be stored and rendered: no control, line-break or
+ *  direction-override characters (they let a name fake a new line or another sender), single spaces, 60 chars. */
+export function cleanName(v: unknown): string {
+  return String(v ?? "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
+}
+
+/** Two names that read the same count as the same name. */
+export function nameKey(name: string): string {
+  return name.normalize("NFKC").toLowerCase();
+}
+
 export class RelayError extends Error {
   constructor(public code: "unauthorized" | "forbidden" | "not_found" | "rate_limited" | "bad_request" | "revoked", msg: string) {
     super(`${code}: ${msg}`);

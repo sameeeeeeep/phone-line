@@ -102,14 +102,28 @@ type OAuthHelpers = {
   completeAuthorization(o: { request: unknown; userId: string; metadata: unknown; scope: string[]; props: Props }): Promise<{ redirectTo: string }>;
 };
 
+const KNOWN_REDIRECT_HOSTS = /^(claude\.ai|claude\.com|([a-z0-9-]+\.)?anthropic\.com|localhost|127\.0\.0\.1)$/;
+
+/** Where an OAuth grant would be sent: its host, and whether that host is a known Claude address. */
+function redirectTarget(uri: string): { host: string; known: boolean } | null {
+  try {
+    const u = new URL(uri);
+    const local = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+    if (u.protocol !== "https:" && !(local && u.protocol === "http:")) return null;
+    return { host: u.host, known: KNOWN_REDIRECT_HOSTS.test(u.hostname) };
+  } catch { return null; }
+}
+
 /** The claude.ai connector's sign-in: paste an invite token → an OAuth grant scoped to that member. */
 async function authorize(request: Request, env: Env) {
   const oauth = env.OAUTH_PROVIDER as OAuthHelpers;
   const n = nonce();
   let req;
-  try { req = await oauth.parseAuthRequest(request); } catch (e) { return html(authorizePage("this app", `Bad sign-in request: ${(e as Error).message}`, n), n, 400); }
-  const client = await oauth.lookupClient(req.clientId);
-  const name = client?.clientName || "Claude";
+  try { req = await oauth.parseAuthRequest(request); } catch (e) { return html(authorizePage(null, `Bad sign-in request: ${(e as Error).message}`, n), n, 400); }
+  // Anyone can register a client and call it "Claude", so the consent page never shows the client's
+  // own name. It shows where the grant will be sent, and warns when that is not a known Claude address.
+  const name = redirectTarget(req.redirectUri);
+  if (!name) return html(authorizePage(null, "Bad sign-in request: the return address is not a valid https address.", n), n, 400);
   if (request.method !== "POST") return html(authorizePage(name, null, n), n);
   const form = await request.formData();
   const token = String(form.get("token") ?? "").trim().replace(/^.*#t=/, "");
