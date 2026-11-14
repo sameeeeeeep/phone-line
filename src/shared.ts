@@ -91,9 +91,19 @@ const LOOKALIKE: Record<string, string> = {
   "ı": "l", "i": "l", "ǀ": "l", "ӏ": "l", "1": "l", "0": "o"
 };
 
-/** A name that mixes Latin letters with Cyrillic or Greek ones is almost always a disguise. */
-export function mixesAlphabets(name: string): boolean {
-  return /\p{Script=Latin}/u.test(name) && /[\p{Script=Cyrillic}\p{Script=Greek}]/u.test(name);
+/** One alphabet per name, and Latin letters must be ordinary ones. Deny by default: a Latin letter
+ *  next to any letter of another script, or a rare Latin-script letter that passes for a common one
+ *  (ɑ, ɩ, ʟ …), is refused. Returns what is wrong, or null. */
+export function nameProblem(name: string): string | null {
+  let latin = false, other = false;
+  for (const ch of name) {
+    if (/\p{Script=Latin}/u.test(ch)) {
+      latin = true;
+      const plain = ch.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+      if (!/^[a-zßæøłđþðœ]+$/.test(plain)) return "use ordinary letters in a display name";
+    } else if (/\p{L}/u.test(ch)) other = true;
+  }
+  return latin && other ? "use one alphabet in a display name" : null;
 }
 
 /** Two names that read the same count as the same name: case, accents, spacing and lookalike letters are ignored. */

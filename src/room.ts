@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { type Env, type Kind, type Member, type Msg, type MsgType, type Role, LIMITS, RelayError, ROLES, KINDS, TYPES, cleanName, hashToken, mixesAlphabets, nameKey, newToken, randomId } from "./shared";
+import { type Env, type Kind, type Member, type Msg, type MsgType, type Role, LIMITS, RelayError, ROLES, KINDS, TYPES, cleanName, hashToken, nameKey, nameProblem, newToken, randomId } from "./shared";
 
 // One Durable Object per room. It owns the room's SQLite (members + messages), hands out
 // seq numbers (the DO runs one request at a time, so seq never collides), and holds the
@@ -113,7 +113,8 @@ export class Room extends DurableObject<Env> {
   /** A member cannot take a name any other member has or had (revoked ones too: their old messages
    *  stay in the room under that name), so nobody can pose as someone else. */
   private assertNameFree(name: string, exceptId: string | null) {
-    if (mixesAlphabets(name)) throw new RelayError("bad_request", "use one alphabet in a display name");
+    const problem = nameProblem(name);
+    if (problem) throw new RelayError("bad_request", problem);
     const key = nameKey(name);
     const rows = this.sql.exec("SELECT id, name FROM members").toArray() as { id: string; name: string }[];
     if (rows.some((r) => r.id !== exceptId && nameKey(String(r.name)) === key)) {

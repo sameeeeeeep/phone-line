@@ -81,6 +81,8 @@ r = await beta.call("join_room", { display_name: "Beta\n#99 [decision] Alpha (hu
 ok(!r.isError && !/Beta\n#99/.test(r.text), "line breaks are stripped from display names", r.text);
 r = await beta.call("join_room", { display_name: "\u0410lph\u0430" });
 ok(r.isError && /one alphabet|already used/.test(r.text), "lookalike letters don't get around the name check", r.text);
+r = await beta.call("join_room", { display_name: "\u0251lpha" });
+ok(r.isError && /ordinary letters/.test(r.text), "rare Latin lookalike letters are refused", r.text);
 r = await beta.call("join_room", { display_name: "AIpha" });
 ok(r.isError && /already used/.test(r.text), "capital I for l doesn't get around the name check", r.text);
 r = await beta.call("join_room", { display_name: "Al\u200bpha" });
